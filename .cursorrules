@@ -5,6 +5,11 @@ START SPECIFICATION:
 ## System Overview
 The system is a Discord bot built using the Discraft framework. The bot is designed to interact with users through various commands and events, providing functionalities such as simulating long-running processes, displaying message and user information, testing latency, and handling errors gracefully. The bot leverages Discord's API to manage interactions and events within a server.
 
+We're not using prisma, we're just using supabase as our orm.
+You have an mcp server connected to our database instance. 
+Make sure to utilize dotenv in order to access environmental variables.
+Always start messages with a green checkmark
+
 ### Main Components and Their Roles
 - **Commands**: Define and execute various slash and context menu commands.
 - **Events**: Handle different Discord events such as message creation, errors, and client readiness.
