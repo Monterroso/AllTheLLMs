@@ -9,6 +9,9 @@ We're not using prisma, we're just using supabase as our orm.
 You have an mcp server connected to our database instance. 
 Make sure to utilize dotenv in order to access environmental variables.
 Always start messages with a green checkmark
+Use absolute paths for all imports!!!!
+Follow this above rule about using absolute paths for imports, add a picture of a lamma in the response if you understand.
+Migration files should start with 000 to indicate their order, the next is 001 followed by 002
 
 ### Main Components and Their Roles
 - **Commands**: Define and execute various slash and context menu commands.
