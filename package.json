@@ -8,11 +8,13 @@
   "scripts": {
     "start": "discraft start",
     "build": "discraft build",
-    "dev": "discraft dev"
+    "dev": "discraft dev",
+    "migrate": "tsx scripts/migrate.ts"
   },
   "devDependencies": {
     "discraft": "latest",
-    "tsconfig-paths": "^4.2.0"
+    "tsconfig-paths": "^4.2.0",
+    "tsx": "^4.19.3"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.39.7",
