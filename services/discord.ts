@@ -7,7 +7,7 @@ import {
   GuildMember,
   ChannelType
 } from 'discord.js';
-import { logger } from '../utils/logger';
+import { logger } from '@utils/logger';
 import type { BotConfig } from '../database/models';
 import { DatabaseService } from './database';
 import { LLMService } from './llm';
