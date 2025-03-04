@@ -5,7 +5,8 @@ import {
   TextChannel, 
   EmbedBuilder, 
   GuildMember,
-  ChannelType
+  ChannelType,
+  WebhookClient
 } from 'discord.js';
 import { logger } from '@utils/logger';
 import type { BotConfig } from '../database/models';
@@ -23,6 +24,7 @@ export class DiscordService {
   private activeServers: Map<string, Set<string>> = new Map(); // Map of server ID to set of active bot aliases
   private serverMessageHistory: Map<string, Message[]> = new Map(); // Map of server ID to message history
   private stopResponding: Set<string> = new Set(); // Set of server IDs where the bot should not respond
+  private webhookCache: Map<string, WebhookClient> = new Map(); // Cache of channel ID to webhook client
 
   constructor(client: Client) {
     this.client = client;
@@ -277,6 +279,8 @@ export class DiscordService {
     
     // Get the last 'count' messages
     const recentMessages = history.slice(-count);
+    logger.info(`History: ${JSON.stringify(history)}`);
+    logger.info(`Recent messages: ${JSON.stringify(recentMessages)}`);
     
     // Format messages for LLM input
     return recentMessages.map(msg => ({
@@ -299,22 +303,81 @@ export class DiscordService {
     if (!message.channel.isTextBased()) return;
     
     try {
-      // Set the bot's avatar if provided
-      if (botConfig.avatar_url && this.client.user) {
-        try {
-          await this.client.user.setAvatar(botConfig.avatar_url);
-          logger.info(`Set avatar for bot ${botConfig.alias}`);
-        } catch (error) {
-          logger.warn(`Error setting avatar for bot ${botConfig.alias}: ${error}`);
-          // Continue anyway, avatar change is not critical
-        }
+      // Use webhooks to send the message with custom username and avatar
+      const webhook = await this.getOrCreateWebhook(message);
+      
+      if (webhook) {
+        // Send message with custom username and avatar
+        await webhook.send({
+          content: response,
+          username: botConfig.alias, // Use the bot alias as the username
+          avatarURL: botConfig.avatar_url || undefined,
+          // Reference the original message to create a reply
+          threadId: message.channel.isThread() ? message.channel.id : undefined,
+          // Make it appear as a reply to the original message
+          allowedMentions: { repliedUser: true },
+          // Include the original message reference
+          flags: message.flags.bitfield
+        });
+        
+        logger.info(`Sent response as ${botConfig.alias} using webhook`);
+      } else {
+        // Fallback to regular message reply if webhook creation fails
+        logger.warn(`Could not create webhook, falling back to regular message`);
+        await message.reply(response);
       }
-      
-      // Send the response
-      await message.reply(response);
-      
     } catch (error) {
       logger.error(`Error sending bot response: ${error}`);
+      
+      // Attempt to fall back to regular message if webhook fails
+      try {
+        await message.reply(response);
+      } catch (fallbackError) {
+        logger.error(`Fallback reply also failed: ${fallbackError}`);
+      }
+    }
+  }
+  
+  /**
+   * Get an existing webhook or create a new one for the channel
+   * @param message The message to respond to
+   * @returns A webhook client or null if creation fails
+   */
+  private async getOrCreateWebhook(message: Message): Promise<WebhookClient | null> {
+    if (!message.guild || !message.channel.isTextBased()) return null;
+    
+    const channelId = message.channel.id;
+    
+    // Check if we already have a webhook for this channel
+    if (this.webhookCache.has(channelId)) {
+      return this.webhookCache.get(channelId) || null;
+    }
+    
+    try {
+      // Try to find an existing webhook created by our bot
+      const channel = message.channel as TextChannel;
+      const webhooks = await channel.fetchWebhooks();
+      let webhook = webhooks.find(wh => wh.owner?.id === this.client.user?.id);
+      
+      // Create a new webhook if none exists
+      if (!webhook) {
+        webhook = await channel.createWebhook({
+          name: 'AllTheLLMs Bot',
+          avatar: this.client.user?.displayAvatarURL(),
+          reason: 'Created for AllTheLLMs bot personality responses'
+        });
+        
+        logger.info(`Created new webhook in channel ${channel.name}`);
+      }
+      
+      // Create a webhook client and cache it
+      const webhookClient = new WebhookClient({ id: webhook.id, token: webhook.token || '' });
+      this.webhookCache.set(channelId, webhookClient);
+      
+      return webhookClient;
+    } catch (error) {
+      logger.error(`Error creating webhook: ${error}`);
+      return null;
     }
   }
 } 
