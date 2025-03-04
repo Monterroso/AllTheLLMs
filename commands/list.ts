@@ -16,7 +16,9 @@ export default {
     .setName('list')
     .setDescription('List all bot personalities enabled for this server'),
   
-  execute: async (interaction: ChatInputCommandInteraction) => {
+  async execute(data: { interaction: ChatInputCommandInteraction }) {
+    const interaction = data.interaction;
+    
     try {
       // Defer reply to give us time to process
       await interaction.deferReply();

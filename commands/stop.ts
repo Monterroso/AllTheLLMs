@@ -18,7 +18,9 @@ export default {
     .setDescription('Stop the bot from responding to messages in this server')
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
   
-  execute: async (interaction: ChatInputCommandInteraction) => {
+  async execute(data: { interaction: ChatInputCommandInteraction }) {
+    const interaction = data.interaction;
+    
     try {
       // Get the server ID
       const serverId = interaction.guildId;

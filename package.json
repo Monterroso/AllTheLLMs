@@ -9,7 +9,9 @@
     "start": "discraft start",
     "build": "discraft build",
     "dev": "discraft dev",
-    "migrate": "tsx scripts/migrate.ts"
+    "migrate": "tsx scripts/migrate.ts",
+    "encrypt": "tsx scripts/encrypt.ts",
+    "decrypt": "tsx scripts/decrypt.ts"
   },
   "devDependencies": {
     "discraft": "latest",

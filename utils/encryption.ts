@@ -1,5 +1,9 @@
 import crypto from 'crypto';
 import { logger } from './logger';
+import dotenv from 'dotenv';
+
+// Load environment variables
+dotenv.config();
 
 // The encryption key should be a 32-byte key (256 bits)
 const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || '';

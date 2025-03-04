@@ -24,7 +24,9 @@ export default {
     )
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
   
-  execute: async (interaction: ChatInputCommandInteraction) => {
+  async execute(data: { interaction: ChatInputCommandInteraction }) {
+    const interaction = data.interaction;
+    
     try {
       // Defer reply to give us time to process
       await interaction.deferReply();
