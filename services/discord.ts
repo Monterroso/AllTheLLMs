@@ -24,6 +24,7 @@ export class DiscordService {
   private activeServers: Map<string, Set<string>> = new Map(); // Map of server ID to set of active bot aliases
   private stopResponding: Set<string> = new Set(); // Set of server IDs where the bot should not respond
   private webhookCache: Map<string, WebhookClient> = new Map(); // Cache of channel ID to webhook client
+  private typingChannels: Set<string> = new Set(); // Set of channel IDs where the bot is currently typing
 
   constructor(client: Client) {
     this.client = client;
@@ -124,7 +125,7 @@ export class DiscordService {
    */
   async processMessage(message: Message): Promise<void> {
     // Ignore messages from bots (unless configured otherwise)
-    if (message.author.bot) return;
+    // if (message.author.bot) return;
     
     // Ignore messages in DMs
     if (!message.guild) return;
@@ -179,17 +180,27 @@ export class DiscordService {
         return;
       }
       
-      // Get message history for context
-      const history = await this.getMessageHistoryForLLM(message, botConfig.message_history_count);
+      // Start typing indicator
+      await this.startTyping(message);
       
-      // Generate response
-      const response = await this.llmService.generateResponse(botConfig, history);
-      
-      // Send the response
-      await this.sendBotResponse(message, response, botConfig);
+      try {
+        // Get message history for context
+        const history = await this.getMessageHistoryForLLM(message, botConfig.message_history_count);
+        
+        // Generate response
+        const response = await this.llmService.generateResponse(botConfig, history);
+        
+        // Send the response
+        await this.sendBotResponse(message, response, botConfig);
+      } finally {
+        // Stop typing indicator regardless of success or failure
+        this.stopTyping(message);
+      }
       
     } catch (error) {
       logger.error(`Error responding with bot ${alias}: ${error}`);
+      // Ensure typing is stopped even if there's an error
+      this.stopTyping(message);
     }
   }
 
@@ -214,14 +225,22 @@ export class DiscordService {
         const random = Math.random();
         
         if (random < bot.response_probability) {
-          // Get message history for context
-          const history = await this.getMessageHistoryForLLM(message, bot.message_history_count);
+          // Start typing indicator
+          await this.startTyping(message);
           
-          // Generate response
-          const response = await this.llmService.generateResponse(bot, history);
-          
-          // Send the response
-          await this.sendBotResponse(message, response, bot);
+          try {
+            // Get message history for context
+            const history = await this.getMessageHistoryForLLM(message, bot.message_history_count);
+            
+            // Generate response
+            const response = await this.llmService.generateResponse(bot, history);
+            
+            // Send the response
+            await this.sendBotResponse(message, response, bot);
+          } finally {
+            // Stop typing indicator regardless of success or failure
+            this.stopTyping(message);
+          }
           
           // Only one bot should respond randomly
           break;
@@ -229,6 +248,8 @@ export class DiscordService {
       }
     } catch (error) {
       logger.error(`Error checking random response: ${error}`);
+      // Ensure typing is stopped if there's an error
+      this.stopTyping(message);
     }
   }
 
@@ -361,5 +382,75 @@ export class DiscordService {
       logger.error(`Error creating webhook: ${error}`);
       return null;
     }
+  }
+
+  /**
+   * Start the typing indicator in a channel
+   * @param message The message to respond to
+   */
+  private async startTyping(message: Message): Promise<void> {
+    if (!message.channel.isTextBased()) return;
+    
+    try {
+      // Start typing indicator using the Discord.js API
+      // Check if the channel supports typing indicators
+      if ('sendTyping' in message.channel) {
+        await message.channel.sendTyping();
+      }
+      
+      // Add channel to typing set
+      this.typingChannels.add(message.channel.id);
+      
+      // Set up a typing interval to keep the indicator active during long LLM generations
+      this.maintainTypingIndicator(message.channel.id);
+      
+      logger.debug(`Started typing indicator in channel ${message.channel.id}`);
+    } catch (error) {
+      logger.error(`Error starting typing indicator: ${error}`);
+    }
+  }
+
+  /**
+   * Stop the typing indicator in a channel
+   * @param message The message that was responded to
+   */
+  private stopTyping(message: Message): void {
+    if (!message.channel.isTextBased()) return;
+    
+    // Remove channel from typing set
+    this.typingChannels.delete(message.channel.id);
+    logger.debug(`Stopped typing indicator in channel ${message.channel.id}`);
+  }
+
+  /**
+   * Maintain the typing indicator for long-running LLM generations
+   * Discord's typing indicator only lasts about 10 seconds, so we need to refresh it
+   * @param channelId The ID of the channel to maintain typing in
+   */
+  private maintainTypingIndicator(channelId: string): void {
+    // Discord typing indicator lasts ~10 seconds, so refresh every 8 seconds
+    const typingInterval = 8000;
+    
+    const sendTyping = async () => {
+      // Check if we should still be typing in this channel
+      if (!this.typingChannels.has(channelId)) return;
+      
+      try {
+        const channel = await this.client.channels.fetch(channelId);
+        // Check if the channel exists, is text-based, and supports typing indicators
+        if (channel?.isTextBased() && 'sendTyping' in channel) {
+          await channel.sendTyping();
+          
+          // Schedule next typing indicator if still needed
+          setTimeout(sendTyping, typingInterval);
+        }
+      } catch (error) {
+        logger.error(`Error maintaining typing indicator: ${error}`);
+        this.typingChannels.delete(channelId);
+      }
+    };
+    
+    // Start the typing maintenance loop
+    setTimeout(sendTyping, typingInterval);
   }
 } 
