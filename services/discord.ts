@@ -6,7 +6,10 @@ import {
   EmbedBuilder, 
   GuildMember,
   ChannelType,
-  WebhookClient
+  WebhookClient,
+  BaseGuildTextChannel,
+  DMChannel,
+  ThreadChannel
 } from 'discord.js';
 import { logger } from '@utils/logger';
 import type { BotConfig } from '../database/models';
@@ -25,6 +28,7 @@ export class DiscordService {
   private stopResponding: Set<string> = new Set(); // Set of server IDs where the bot should not respond
   private webhookCache: Map<string, WebhookClient> = new Map(); // Cache of channel ID to webhook client
   private typingChannels: Set<string> = new Set(); // Set of channel IDs where the bot is currently typing
+  private readonly MAX_MESSAGE_LENGTH = 2000; // Discord's maximum message length
 
   constructor(client: Client) {
     this.client = client;
@@ -310,35 +314,153 @@ export class DiscordService {
       const webhook = await this.getOrCreateWebhook(message);
       
       if (webhook) {
-        // Send message with custom username and avatar
-        await webhook.send({
-          content: response,
-          username: botConfig.alias, // Use the bot alias as the username
-          avatarURL: botConfig.avatar_url || undefined,
-          // Reference the original message to create a reply
-          threadId: message.channel.isThread() ? message.channel.id : undefined,
-          // Make it appear as a reply to the original message
-          allowedMentions: { repliedUser: true },
-          // Include the original message reference
-          flags: message.flags.bitfield
-        });
+        // Split the response if it exceeds Discord's character limit
+        const messageParts = this.splitLongMessage(response);
         
-        logger.info(`Sent response as ${botConfig.alias} using webhook`);
+        // Send each part as a separate message
+        for (let i = 0; i < messageParts.length; i++) {
+          const isFirstMessage = i === 0;
+          
+          // Prepare webhook options
+          const webhookOptions: any = {
+            content: messageParts[i],
+            username: botConfig.alias, // Use the bot alias as the username
+            avatarURL: botConfig.avatar_url || undefined,
+            // Only make the first message appear as a reply to the original message
+            allowedMentions: isFirstMessage ? { repliedUser: true } : undefined,
+          };
+          
+          // Handle thread messages properly
+          if (message.channel.isThread()) {
+            // For threads, we need to specify the thread ID
+            webhookOptions.threadId = message.channel.id;
+          }
+          
+          await webhook.send(webhookOptions);
+          
+          // Add a small delay between messages to maintain order
+          if (i < messageParts.length - 1) {
+            await new Promise(resolve => setTimeout(resolve, 500));
+          }
+        }
+        
+        logger.info(`Sent response as ${botConfig.alias} using webhook (${messageParts.length} parts)`);
       } else {
         // Fallback to regular message reply if webhook creation fails
         logger.warn(`Could not create webhook, falling back to regular message`);
-        await message.reply(response);
+        
+        // Split the response if it exceeds Discord's character limit
+        const messageParts = this.splitLongMessage(response);
+        
+        // Send the first part as a reply to the original message
+        const firstReply = await message.reply(messageParts[0]);
+        
+        // Send the rest as regular messages
+        for (let i = 1; i < messageParts.length; i++) {
+          // Use the correct method to send messages to the channel
+          const channel = message.channel;
+          if (channel instanceof BaseGuildTextChannel || 
+              channel instanceof DMChannel || 
+              channel instanceof ThreadChannel) {
+            await channel.send(messageParts[i]);
+          }
+          
+          // Add a small delay between messages to maintain order
+          if (i < messageParts.length - 1) {
+            await new Promise(resolve => setTimeout(resolve, 500));
+          }
+        }
       }
     } catch (error) {
       logger.error(`Error sending bot response: ${error}`);
       
       // Attempt to fall back to regular message if webhook fails
       try {
-        await message.reply(response);
+        // Split the response if it exceeds Discord's character limit
+        const messageParts = this.splitLongMessage(response);
+        
+        // Send the first part as a reply to the original message
+        const firstReply = await message.reply(messageParts[0]);
+        
+        // Send the rest as regular messages
+        for (let i = 1; i < messageParts.length; i++) {
+          // Use the correct method to send messages to the channel
+          const channel = message.channel;
+          if (channel instanceof BaseGuildTextChannel || 
+              channel instanceof DMChannel || 
+              channel instanceof ThreadChannel) {
+            await channel.send(messageParts[i]);
+          }
+        }
       } catch (fallbackError) {
         logger.error(`Fallback reply also failed: ${fallbackError}`);
       }
     }
+  }
+  
+  /**
+   * Split a long message into multiple parts that fit within Discord's character limit
+   * @param message The message to split
+   * @returns An array of message parts
+   */
+  private splitLongMessage(message: string): string[] {
+    // If the message is within the limit, return it as is
+    if (message.length <= this.MAX_MESSAGE_LENGTH) {
+      return [message];
+    }
+    
+    const parts: string[] = [];
+    let remainingText = message;
+    
+    while (remainingText.length > 0) {
+      // If the remaining text fits within the limit
+      if (remainingText.length <= this.MAX_MESSAGE_LENGTH) {
+        parts.push(remainingText);
+        break;
+      }
+      
+      // Find a good breaking point (preferably at a paragraph or sentence)
+      let splitIndex = this.MAX_MESSAGE_LENGTH;
+      
+      // Try to find a paragraph break within the last 200 characters of the limit
+      const lastParagraphBreak = remainingText.lastIndexOf('\n\n', this.MAX_MESSAGE_LENGTH);
+      if (lastParagraphBreak > this.MAX_MESSAGE_LENGTH - 200) {
+        splitIndex = lastParagraphBreak + 2; // Include the paragraph break
+      } else {
+        // Try to find a line break
+        const lastLineBreak = remainingText.lastIndexOf('\n', this.MAX_MESSAGE_LENGTH);
+        if (lastLineBreak > this.MAX_MESSAGE_LENGTH - 100) {
+          splitIndex = lastLineBreak + 1; // Include the line break
+        } else {
+          // Try to find a sentence break (period, question mark, exclamation mark)
+          const sentenceBreakRegex = /[.!?]\s/g;
+          let lastSentenceBreak = -1;
+          let match;
+          
+          // Find the last sentence break within the limit
+          while ((match = sentenceBreakRegex.exec(remainingText.substring(0, this.MAX_MESSAGE_LENGTH))) !== null) {
+            lastSentenceBreak = match.index + 2; // Include the punctuation and space
+          }
+          
+          if (lastSentenceBreak > this.MAX_MESSAGE_LENGTH - 100) {
+            splitIndex = lastSentenceBreak;
+          } else {
+            // If no good breaking point is found, try to break at a space
+            const lastSpace = remainingText.lastIndexOf(' ', this.MAX_MESSAGE_LENGTH);
+            if (lastSpace > this.MAX_MESSAGE_LENGTH - 50) {
+              splitIndex = lastSpace + 1; // Include the space
+            }
+            // Otherwise, just break at the maximum length
+          }
+        }
+      }
+      
+      // Add the part and update the remaining text
+      parts.push(remainingText.substring(0, splitIndex));
+      remainingText = remainingText.substring(splitIndex);
+    }
+    
+    return parts;
   }
   
   /**
@@ -357,24 +479,50 @@ export class DiscordService {
     }
     
     try {
+      let targetChannel: TextChannel;
+      
+      // Handle threads by getting their parent channel
+      if (message.channel.isThread()) {
+        // Get the parent channel of the thread
+        const parentChannel = message.channel.parent;
+        
+        // If we can't get the parent channel or it's not a text channel, we can't create a webhook
+        if (!parentChannel || !(parentChannel instanceof TextChannel)) {
+          logger.error(`Cannot create webhook: Thread's parent channel is not available or not a text channel`);
+          return null;
+        }
+        
+        targetChannel = parentChannel;
+        logger.debug(`Using parent channel ${parentChannel.name} for thread webhook`);
+      } else if (message.channel instanceof TextChannel) {
+        // For regular text channels
+        targetChannel = message.channel;
+      } else {
+        // For other channel types that don't support webhooks
+        logger.error(`Channel type ${message.channel.type} does not support webhooks`);
+        return null;
+      }
+      
       // Try to find an existing webhook created by our bot
-      const channel = message.channel as TextChannel;
-      const webhooks = await channel.fetchWebhooks();
+      const webhooks = await targetChannel.fetchWebhooks();
       let webhook = webhooks.find(wh => wh.owner?.id === this.client.user?.id);
       
       // Create a new webhook if none exists
       if (!webhook) {
-        webhook = await channel.createWebhook({
+        webhook = await targetChannel.createWebhook({
           name: 'AllTheLLMs Bot',
           avatar: this.client.user?.displayAvatarURL(),
           reason: 'Created for AllTheLLMs bot personality responses'
         });
         
-        logger.info(`Created new webhook in channel ${channel.name}`);
+        logger.info(`Created new webhook in channel ${targetChannel.name}`);
       }
       
       // Create a webhook client and cache it
       const webhookClient = new WebhookClient({ id: webhook.id, token: webhook.token || '' });
+      
+      // Cache the webhook using the original channel ID (which might be a thread)
+      // This way, future messages in the same thread will reuse this webhook
       this.webhookCache.set(channelId, webhookClient);
       
       return webhookClient;
