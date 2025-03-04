@@ -22,7 +22,6 @@ export class DiscordService {
   private databaseService: DatabaseService;
   private llmService: LLMService;
   private activeServers: Map<string, Set<string>> = new Map(); // Map of server ID to set of active bot aliases
-  private serverMessageHistory: Map<string, Message[]> = new Map(); // Map of server ID to message history
   private stopResponding: Set<string> = new Set(); // Set of server IDs where the bot should not respond
   private webhookCache: Map<string, WebhookClient> = new Map(); // Cache of channel ID to webhook client
 
@@ -133,9 +132,6 @@ export class DiscordService {
     // Ignore messages if the bot is stopped in this server
     if (this.stopResponding.has(message.guild.id)) return;
     
-    // Add message to history
-    this.addMessageToHistory(message);
-    
     // Check if the message contains a bot trigger
     const botAlias = this.extractBotAlias(message.content);
     if (botAlias) {
@@ -155,32 +151,6 @@ export class DiscordService {
   private extractBotAlias(content: string): string | null {
     const match = content.match(/!([a-zA-Z0-9_-]+)/);
     return match ? match[1] : null;
-  }
-
-  /**
-   * Add a message to the server's message history
-   * @param message The Discord message
-   */
-  private addMessageToHistory(message: Message): void {
-    if (!message.guild) return;
-    
-    const serverId = message.guild.id;
-    
-    if (!this.serverMessageHistory.has(serverId)) {
-      this.serverMessageHistory.set(serverId, []);
-    }
-    
-    const history = this.serverMessageHistory.get(serverId);
-    if (history) {
-      // Add the message to history
-      history.push(message);
-      
-      // Limit history size (default to 100 messages per server)
-      const maxHistorySize = 100;
-      if (history.length > maxHistorySize) {
-        history.shift(); // Remove oldest message
-      }
-    }
   }
 
   /**
@@ -210,7 +180,7 @@ export class DiscordService {
       }
       
       // Get message history for context
-      const history = this.getMessageHistoryForLLM(message, botConfig.message_history_count);
+      const history = await this.getMessageHistoryForLLM(message, botConfig.message_history_count);
       
       // Generate response
       const response = await this.llmService.generateResponse(botConfig, history);
@@ -245,7 +215,7 @@ export class DiscordService {
         
         if (random < bot.response_probability) {
           // Get message history for context
-          const history = this.getMessageHistoryForLLM(message, bot.message_history_count);
+          const history = await this.getMessageHistoryForLLM(message, bot.message_history_count);
           
           // Generate response
           const response = await this.llmService.generateResponse(bot, history);
@@ -268,25 +238,37 @@ export class DiscordService {
    * @param count Number of previous messages to include
    * @returns Array of messages formatted for LLM input
    */
-  private getMessageHistoryForLLM(
+  private async getMessageHistoryForLLM(
     message: Message, 
     count: number
-  ): Array<{ role: string; content: string }> {
-    if (!message.guild) return [];
+  ): Promise<Array<{ role: string; content: string }>> {
+    if (!message.guild || !message.channel.isTextBased()) return [];
     
-    const serverId = message.guild.id;
-    const history = this.serverMessageHistory.get(serverId) || [];
-    
-    // Get the last 'count' messages
-    const recentMessages = history.slice(-count);
-    logger.info(`History: ${JSON.stringify(history)}`);
-    logger.info(`Recent messages: ${JSON.stringify(recentMessages)}`);
-    
-    // Format messages for LLM input
-    return recentMessages.map(msg => ({
-      role: msg.author.id === this.client.user?.id ? 'assistant' : 'user',
-      content: msg.content
-    }));
+    try {
+      // Fetch recent messages from the channel
+      const fetchedMessages = await message.channel.messages.fetch({ 
+        limit: count,
+        before: message.id 
+      });
+      
+      // Add the current message to the history
+      const allMessages = [message, ...fetchedMessages.values()];
+      
+      // Sort messages by timestamp (oldest first)
+      const sortedMessages = allMessages.sort((a, b) => a.createdTimestamp - b.createdTimestamp);
+      
+      // Format messages for LLM input
+      return sortedMessages.map(msg => ({
+        role: msg.author.id === this.client.user?.id ? 'assistant' : 'user',
+        content: msg.content
+      }));
+    } catch (error) {
+      logger.error(`Error fetching message history: ${error}`);
+      return [{
+        role: 'user',
+        content: message.content
+      }];
+    }
   }
 
   /**
