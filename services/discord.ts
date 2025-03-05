@@ -28,6 +28,7 @@ export class DiscordService {
   private stopResponding: Set<string> = new Set(); // Set of server IDs where the bot should not respond
   private webhookCache: Map<string, WebhookClient> = new Map(); // Cache of channel ID to webhook client
   private typingChannels: Set<string> = new Set(); // Set of channel IDs where the bot is currently typing
+  private typingTimeouts: Map<string, NodeJS.Timeout> = new Map(); // Map of channel ID to typing timeout
   private readonly MAX_MESSAGE_LENGTH = 2000; // Discord's maximum message length
 
   constructor(client: Client) {
@@ -215,6 +216,9 @@ export class DiscordService {
   private async checkRandomResponse(message: Message): Promise<void> {
     if (!message.guild) return;
     
+    // Skip random responses for messages from bots
+    if (message.author.bot) return;
+    
     try {
       // Get all bots enabled for this server
       const serverBots = await this.databaseService.getServerBots(message.guild.id);
@@ -224,30 +228,34 @@ export class DiscordService {
       
       if (eligibleBots.length === 0) return;
       
-      // Select a bot based on probability
-      for (const bot of eligibleBots) {
-        const random = Math.random();
+      // First, determine if any bot should respond at all
+      // Find the highest probability to use as the threshold for responding
+      const highestProbability = Math.max(...eligibleBots.map(bot => bot.response_probability));
+      const shouldRespond = Math.random() < highestProbability;
+      
+      if (!shouldRespond) return;
+      
+      // Use weighted random selection to pick which bot responds
+      // Create an array of weights based on each bot's probability
+      const weights = eligibleBots.map(bot => bot.response_probability);
+      const selectedBot = this.weightedRandomSelection(eligibleBots, weights);
+      
+      if (selectedBot) {
+        // Start typing indicator
+        await this.startTyping(message);
         
-        if (random < bot.response_probability) {
-          // Start typing indicator
-          await this.startTyping(message);
+        try {
+          // Get message history for context
+          const history = await this.getMessageHistoryForLLM(message, selectedBot.message_history_count);
           
-          try {
-            // Get message history for context
-            const history = await this.getMessageHistoryForLLM(message, bot.message_history_count);
-            
-            // Generate response
-            const response = await this.llmService.generateResponse(bot, history);
-            
-            // Send the response
-            await this.sendBotResponse(message, response, bot);
-          } finally {
-            // Stop typing indicator regardless of success or failure
-            this.stopTyping(message);
-          }
+          // Generate response
+          const response = await this.llmService.generateResponse(selectedBot, history);
           
-          // Only one bot should respond randomly
-          break;
+          // Send the response
+          await this.sendBotResponse(message, response, selectedBot);
+        } finally {
+          // Stop typing indicator regardless of success or failure
+          this.stopTyping(message);
         }
       }
     } catch (error) {
@@ -255,6 +263,36 @@ export class DiscordService {
       // Ensure typing is stopped if there's an error
       this.stopTyping(message);
     }
+  }
+
+  /**
+   * Select an item from an array using weighted random selection
+   * @param items Array of items to select from
+   * @param weights Array of weights corresponding to each item
+   * @returns The selected item or null if the array is empty
+   */
+  private weightedRandomSelection<T>(items: T[], weights: number[]): T | null {
+    if (items.length === 0 || weights.length === 0 || items.length !== weights.length) {
+      return null;
+    }
+    
+    // Calculate the sum of all weights
+    const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
+    
+    // Generate a random number between 0 and the total weight
+    const randomValue = Math.random() * totalWeight;
+    
+    // Find the item that corresponds to the random value
+    let cumulativeWeight = 0;
+    for (let i = 0; i < items.length; i++) {
+      cumulativeWeight += weights[i];
+      if (randomValue < cumulativeWeight) {
+        return items[i];
+      }
+    }
+    
+    // Fallback to the last item (should rarely happen due to floating-point precision)
+    return items[items.length - 1];
   }
 
   /**
@@ -567,6 +605,14 @@ export class DiscordService {
     
     // Remove channel from typing set
     this.typingChannels.delete(message.channel.id);
+    
+    // Clear any existing typing timeout
+    const existingTimeout = this.typingTimeouts.get(message.channel.id);
+    if (existingTimeout) {
+      clearTimeout(existingTimeout);
+      this.typingTimeouts.delete(message.channel.id);
+    }
+    
     logger.debug(`Stopped typing indicator in channel ${message.channel.id}`);
   }
 
@@ -579,9 +625,19 @@ export class DiscordService {
     // Discord typing indicator lasts ~10 seconds, so refresh every 8 seconds
     const typingInterval = 8000;
     
+    // Clear any existing timeout for this channel
+    const existingTimeout = this.typingTimeouts.get(channelId);
+    if (existingTimeout) {
+      clearTimeout(existingTimeout);
+    }
+    
     const sendTyping = async () => {
       // Check if we should still be typing in this channel
-      if (!this.typingChannels.has(channelId)) return;
+      if (!this.typingChannels.has(channelId)) {
+        // Clean up the timeout if we're no longer typing
+        this.typingTimeouts.delete(channelId);
+        return;
+      }
       
       try {
         const channel = await this.client.channels.fetch(channelId);
@@ -590,15 +646,22 @@ export class DiscordService {
           await channel.sendTyping();
           
           // Schedule next typing indicator if still needed
-          setTimeout(sendTyping, typingInterval);
+          const timeout = setTimeout(sendTyping, typingInterval);
+          this.typingTimeouts.set(channelId, timeout);
+        } else {
+          // Channel no longer valid, clean up
+          this.typingChannels.delete(channelId);
+          this.typingTimeouts.delete(channelId);
         }
       } catch (error) {
         logger.error(`Error maintaining typing indicator: ${error}`);
         this.typingChannels.delete(channelId);
+        this.typingTimeouts.delete(channelId);
       }
     };
     
     // Start the typing maintenance loop
-    setTimeout(sendTyping, typingInterval);
+    const timeout = setTimeout(sendTyping, typingInterval);
+    this.typingTimeouts.set(channelId, timeout);
   }
 } 
