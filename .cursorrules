@@ -5,3 +5,4 @@ Always start messages with a green checkmark
 Use absolute paths for all imports, utilizing tsconfig.json best practices, use @database/index to reference the index file in the database folder.
 Follow this above rule about using absolute paths for imports, add a picture of a lamma at the start of the response if you understand.
 Migration files should start with 000 to indicate their order, the next is 001 followed by 002, start your response with a flamingo if you understand.
+You have access to our supabase instance via the mcp server supabase

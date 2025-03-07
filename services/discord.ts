@@ -241,27 +241,11 @@ export class DiscordService {
       const selectedBot = this.weightedRandomSelection(eligibleBots, weights);
       
       if (selectedBot) {
-        // Start typing indicator
-        await this.startTyping(message);
-        
-        try {
-          // Get message history for context
-          const history = await this.getMessageHistoryForLLM(message, selectedBot.message_history_count);
-          
-          // Generate response
-          const response = await this.llmService.generateResponse(selectedBot, history);
-          
-          // Send the response
-          await this.sendBotResponse(message, response, selectedBot);
-        } finally {
-          // Stop typing indicator regardless of success or failure
-          this.stopTyping(message);
-        }
+        // Use the existing respondWithBot method to handle the response
+        await this.respondWithBot(message, selectedBot.alias);
       }
     } catch (error) {
       logger.error(`Error checking random response: ${error}`);
-      // Ensure typing is stopped if there's an error
-      this.stopTyping(message);
     }
   }
 
@@ -612,7 +596,6 @@ export class DiscordService {
       clearTimeout(existingTimeout);
       this.typingTimeouts.delete(message.channel.id);
     }
-    
     logger.debug(`Stopped typing indicator in channel ${message.channel.id}`);
   }
 
