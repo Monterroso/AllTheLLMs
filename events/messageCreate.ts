@@ -1,18 +1,13 @@
 import { Client, Events, Message } from "discord.js";
 import { logger } from "../utils/logger";
-import { DiscordService } from "../services/discord";
-
-// Create a singleton instance of the Discord service
-let discordService: DiscordService | null = null;
+import { getDiscordService } from "../services";
 
 export default {
   event: Events.MessageCreate,
   handler: async (client: Client, message: Message) => {
     try {
-      // Initialize the Discord service if it doesn't exist
-      if (!discordService) {
-        discordService = new DiscordService(client);
-      }
+      // Get the Discord service instance
+      const discordService = getDiscordService(client);
       
       // Process the message
       await discordService.processMessage(message);

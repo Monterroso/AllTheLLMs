@@ -49,7 +49,32 @@ export class DiscordService {
       await this.updateServerInfo(guild);
     }
     
+    // Load stopped servers from the database
+    await this.loadStoppedServers();
+    
     logger.success('Discord service initialized.');
+  }
+
+  /**
+   * Load stopped servers from the database
+   */
+  private async loadStoppedServers(): Promise<void> {
+    try {
+      // Get all stopped servers from the database service
+      const stoppedServerIds = await this.databaseService.getAllStoppedServers();
+      
+      // Clear the current set and add all stopped servers
+      this.stopResponding.clear();
+      
+      for (const serverId of stoppedServerIds) {
+        this.stopResponding.add(serverId);
+        logger.info(`Loaded stopped server: ${serverId}`);
+      }
+      
+      logger.info(`Loaded ${this.stopResponding.size} stopped servers`);
+    } catch (error) {
+      logger.error(`Error loading stopped servers: ${error}`);
+    }
   }
 
   /**
@@ -110,18 +135,54 @@ export class DiscordService {
    * Stop the bot from responding in a server
    * @param serverId The Discord server ID
    */
-  stopRespondingInServer(serverId: string): void {
-    this.stopResponding.add(serverId);
-    logger.info(`Stopped responding in server ${serverId}`);
+  async stopRespondingInServer(serverId: string): Promise<boolean> {
+    try {
+      // Add to the in-memory set
+      this.stopResponding.add(serverId);
+      
+      // Update the database
+      const success = await this.databaseService.setServerStopped(serverId, true);
+      
+      if (success) {
+        logger.info(`Stopped responding in server ${serverId}`);
+      } else {
+        logger.error(`Failed to update database for stopped server ${serverId}`);
+        // Remove from the in-memory set if database update failed
+        this.stopResponding.delete(serverId);
+      }
+      
+      return success;
+    } catch (error) {
+      logger.error(`Error stopping response in server: ${error}`);
+      return false;
+    }
   }
 
   /**
    * Resume the bot responding in a server
    * @param serverId The Discord server ID
    */
-  resumeRespondingInServer(serverId: string): void {
-    this.stopResponding.delete(serverId);
-    logger.info(`Resumed responding in server ${serverId}`);
+  async resumeRespondingInServer(serverId: string): Promise<boolean> {
+    try {
+      // Remove from the in-memory set
+      this.stopResponding.delete(serverId);
+      
+      // Update the database
+      const success = await this.databaseService.setServerStopped(serverId, false);
+      
+      if (success) {
+        logger.info(`Resumed responding in server ${serverId}`);
+      } else {
+        logger.error(`Failed to update database for resumed server ${serverId}`);
+        // Add back to the in-memory set if database update failed
+        this.stopResponding.add(serverId);
+      }
+      
+      return success;
+    } catch (error) {
+      logger.error(`Error resuming response in server: ${error}`);
+      return false;
+    }
   }
 
   /**

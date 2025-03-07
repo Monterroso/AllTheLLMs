@@ -23,6 +23,7 @@ export interface Server {
   discord_server_id: string;
   name: string;
   joined_at: string;
+  stopped: boolean;
 }
 
 // Server-Bot relationship model

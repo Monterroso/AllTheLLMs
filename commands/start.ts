@@ -4,7 +4,7 @@ import {
   PermissionFlagsBits 
 } from 'discord.js';
 import { logger } from '../utils/logger';
-import { DiscordService } from '../services/discord';
+import { getDiscordService } from '../services';
 import client from '../clients/discord';
 
 /**
@@ -30,13 +30,17 @@ export default {
         return;
       }
       
-      // Create Discord service
-      const discordService = new DiscordService(client);
+      // Get the Discord service
+      const discordService = getDiscordService(client);
       
       // Resume responding in this server
-      discordService.resumeRespondingInServer(serverId);
+      const success = await discordService.resumeRespondingInServer(serverId);
       
-      await interaction.reply('✅ The bot will now respond to messages in this server.');
+      if (success) {
+        await interaction.reply('✅ The bot will now respond to messages in this server.');
+      } else {
+        await interaction.reply('❌ Failed to start the bot. Please try again later.');
+      }
       
     } catch (error) {
       logger.error(`Error executing start command: ${error}`);

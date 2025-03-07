@@ -236,4 +236,82 @@ export class DatabaseService {
     
     return true;
   }
+
+  /**
+   * Set the stopped state for a server
+   * @param serverId The Discord server ID
+   * @param stopped Whether the bot should be stopped in this server
+   * @returns True if successful, false otherwise
+   */
+  async setServerStopped(serverId: string, stopped: boolean): Promise<boolean> {
+    try {
+      // Get the server first
+      const server = await this.getServerByDiscordId(serverId);
+      
+      if (!server) {
+        logger.error(`Server ${serverId} not found when setting stopped state`);
+        return false;
+      }
+      
+      // Update the stopped field
+      const { error } = await supabase
+        .from(Tables.SERVERS)
+        .update({ stopped })
+        .eq('id', server.id);
+      
+      if (error) {
+        logger.error(`Error setting server stopped state: ${error.message}`);
+        return false;
+      }
+      
+      return true;
+    } catch (error) {
+      logger.error(`Error setting server stopped state: ${error}`);
+      return false;
+    }
+  }
+
+  /**
+   * Get the stopped state for a server
+   * @param serverId The Discord server ID
+   * @returns Whether the bot is stopped in this server, defaults to false if server not found
+   */
+  async isServerStopped(serverId: string): Promise<boolean> {
+    try {
+      const server = await this.getServerByDiscordId(serverId);
+      
+      if (!server) {
+        logger.warn(`Server ${serverId} not found when checking stopped state`);
+        return false;
+      }
+      
+      return server.stopped;
+    } catch (error) {
+      logger.error(`Error checking server stopped state: ${error}`);
+      return false;
+    }
+  }
+
+  /**
+   * Get all servers where the bot is stopped
+   * @returns Array of Discord server IDs where the bot is stopped
+   */
+  async getAllStoppedServers(): Promise<string[]> {
+    try {
+      const { data, error } = await supabase
+        .from(Tables.SERVERS)
+        .select('discord_server_id')
+        .eq('stopped', true);
+      
+      if (error) {
+        logger.error(`Error fetching stopped servers: ${error.message}`);
+        return [];
+      }
+      
+      return (data || []).map(server => server.discord_server_id);
+    } catch (error) {
+      logger.error(`Error fetching stopped servers: ${error}`);
+      return [];
+    }
+  }
 } 

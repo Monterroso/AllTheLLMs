@@ -1,9 +1,6 @@
 import { ActivityType, Client, Events } from "discord.js";
 import { logger } from "../utils/logger";
-import { DiscordService } from "../services/discord";
-
-// Create a singleton instance of the Discord service
-let discordService: DiscordService | null = null;
+import { initializeServices } from "../services";
 
 export default {
   event: Events.ClientReady,
@@ -31,11 +28,8 @@ export default {
       
       logger.success("Presence set.");
       
-      // Initialize the Discord service
-      logger.info("Initializing Discord service...");
-      discordService = new DiscordService(client);
-      await discordService.initialize();
-      logger.success("Discord service initialized.");
+      // Initialize all services
+      await initializeServices(client);
       
     } catch (err) {
       logger.error("Error in ready event:", err);

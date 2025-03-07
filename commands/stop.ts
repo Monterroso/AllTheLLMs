@@ -4,7 +4,7 @@ import {
   PermissionFlagsBits 
 } from 'discord.js';
 import { logger } from '../utils/logger';
-import { DiscordService } from '../services/discord';
+import { getDiscordService } from '../services';
 import client from '../clients/discord';
 
 /**
@@ -30,13 +30,17 @@ export default {
         return;
       }
       
-      // Create Discord service
-      const discordService = new DiscordService(client);
+      // Get the Discord service
+      const discordService = getDiscordService(client);
       
       // Stop responding in this server
-      discordService.stopRespondingInServer(serverId);
+      const success = await discordService.stopRespondingInServer(serverId);
       
-      await interaction.reply('✅ The bot will no longer respond to messages in this server. Use `/start` to resume.');
+      if (success) {
+        await interaction.reply('✅ The bot will no longer respond to messages in this server. Use `/start` to resume.');
+      } else {
+        await interaction.reply('❌ Failed to stop the bot. Please try again later.');
+      }
       
     } catch (error) {
       logger.error(`Error executing stop command: ${error}`);
