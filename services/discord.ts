@@ -97,7 +97,7 @@ export class DiscordService {
    * @param serverId The Discord server ID
    * @returns Array of bot configurations
    */
-  async getServerBots(serverId: string): Promise<BotConfig[]> {
+  public async getServerBots(serverId: string): Promise<BotConfig[]> {
     try {
       return await this.databaseService.getServerBots(serverId);
     } catch (error) {
@@ -192,8 +192,11 @@ export class DiscordService {
         // Get message history for context
         const history = await this.getMessageHistoryForLLM(message, botConfig.message_history_count);
         
-        // Generate response
-        const response = await this.llmService.generateResponse(botConfig, history);
+        // Generate bot awareness message
+        const botAwarenessMessage = await this.generateBotAwarenessMessage(message.guild.id, alias);
+        
+        // Generate response with bot awareness
+        const response = await this.llmService.generateResponse(botConfig, history, botAwarenessMessage);
         
         // Send the response
         await this.sendBotResponse(message, response, botConfig);
@@ -646,5 +649,47 @@ export class DiscordService {
     // Start the typing maintenance loop
     const timeout = setTimeout(sendTyping, typingInterval);
     this.typingTimeouts.set(channelId, timeout);
+  }
+
+  /**
+   * Generate a bot awareness message for a server
+   * @param serverId The Discord server ID
+   * @param currentBotAlias The alias of the current bot
+   * @returns The generated bot awareness message
+   */
+  private async generateBotAwarenessMessage(serverId: string, currentBotAlias: string): Promise<string> {
+    try {
+      // Get all bots enabled for this server
+      const serverBots = await this.databaseService.getServerBots(serverId);
+      
+      // Filter out the current bot
+      const otherBots = serverBots.filter(bot => bot.alias !== currentBotAlias);
+      
+      if (otherBots.length === 0) {
+        return ""; // No other bots available
+      }
+      
+      // Format the bot awareness message
+      let message = "You can interact with other AI assistants in this server:\n";
+      
+      otherBots.forEach(bot => {
+        message += `- !${bot.alias} (${bot.llm_type}): ${bot.system_prompt.substring(0, 100)}${bot.system_prompt.length > 100 ? '...' : ''}\n`;
+      });
+      
+      message += "\nYou can message these assistants by using the !<alias> format in your responses. " +
+                "Feel free to collaborate with them as an AI agent. " +
+                "When another assistant messages you, respond to them as you would to a human user. If they should respond to you, you MUST use the !<alias> format." +
+                "Remember that for a bot to respond to you, they must be mentioned in the message with the !<alias> format.";
+
+      message += "\nIMPORTANT EXAMPLES for addressing bots with personas:\n" +
+                "- CORRECT: If !Claude says 'I'm taking the role of Aristotle', you should respond with '!Claude, I have a question for you as Aristotle...'\n" +
+                "- INCORRECT: '!Aristotle, I have a question for you...'\n" +
+                "Always use the bot's actual alias (!Claude) not their persona name (!Aristotle) when addressing them.";
+
+      return message;
+    } catch (error) {
+      logger.error(`Error generating bot awareness message: ${error}`);
+      return ""; // Return empty string on error
+    }
   }
 } 

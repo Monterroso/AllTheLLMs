@@ -11,22 +11,35 @@ export class LLMService {
    * Generate a response from an LLM based on the bot configuration
    * @param botConfig The bot configuration
    * @param messages Array of previous messages for context
+   * @param botAwarenessMessage Optional message about other bots in the server
    * @returns The generated response
    */
   async generateResponse(
     botConfig: BotConfig, 
-    messages: Array<{ role: string; content: string }>
+    messages: Array<{ role: string; content: string }>,
+    botAwarenessMessage: string = ""
   ): Promise<string> {
     try {
       // Decrypt the API key
       const apiKey = decrypt(botConfig.encrypted_api_key);
       
+      // Create the system prompt with bot awareness
+      let systemPrompt = botConfig.system_prompt;
+      
+      // Add bot awareness information if available
+      if (botAwarenessMessage) {
+        systemPrompt += "\n\n" + botAwarenessMessage;
+      }
+      
       // Add the system prompt as the first message if it's not already there
       if (messages.length === 0 || messages[0].role !== 'system') {
         messages.unshift({
           role: 'system',
-          content: botConfig.system_prompt
+          content: systemPrompt
         });
+      } else {
+        // Update the existing system prompt
+        messages[0].content = systemPrompt;
       }
       
       // Generate response based on the LLM type
