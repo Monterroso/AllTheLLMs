@@ -91,3 +91,53 @@ The system is a Discord bot designed to manage and interact with various bot per
 - The `DiscordService` interacts with the `DatabaseService` to load and update server information, enable/disable bots, and retrieve bot configurations.
 - The `LLMService` interacts with encryption utilities for decrypting API keys and with the logger for logging errors and information.
 - The `index.ts` file orchestrates the initialization and operation of the Discord bot, registering events and commands, and handling the client connection.
+
+## Design Patterns
+
+The AllTheLLMs codebase implements several design patterns:
+
+### Singleton Pattern
+Used in `services/index.ts` to ensure only one instance of each service exists throughout the application lifecycle. This pattern is crucial for maintaining consistent state across the application.
+
+```typescript
+// Singleton instances of services
+let discordService: DiscordService | null = null;
+
+export function getDiscordService(client: Client): DiscordService {
+  if (!discordService) {
+    logger.info('Creating new Discord service instance');
+    discordService = new DiscordService(client);
+  }
+  
+  return discordService;
+}
+```
+
+### Service Pattern
+Core functionality is organized into specialized services (DiscordService, LLMService, DatabaseService) with clear responsibilities and interfaces.
+
+### Repository Pattern
+The DatabaseService acts as a repository layer, abstracting database operations and providing a clean interface for data access.
+
+### Strategy Pattern
+The LLMService implements different strategies for each LLM provider (OpenAI, Anthropic, Gemini), allowing for easy addition of new providers.
+
+```typescript
+// Generate response based on the LLM type
+switch (botConfig.llm_type.toLowerCase()) {
+  case 'openai':
+    return await this.generateOpenAIResponse(apiKey, messages);
+  case 'anthropic':
+    return await this.generateAnthropicResponse(apiKey, messages);
+  case 'gemini':
+    return await this.generateGeminiResponse(apiKey, messages);
+  default:
+    throw new Error(`Unsupported LLM type: ${botConfig.llm_type}`);
+}
+```
+
+### Observer Pattern
+Event handling in the Discord service follows the observer pattern, with handlers registered for various events.
+
+### Factory Pattern
+Service creation and initialization in services/index.ts follows the factory pattern, providing a centralized way to create and configure service instances.
